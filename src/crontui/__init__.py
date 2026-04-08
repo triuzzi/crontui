@@ -524,17 +524,10 @@ class CrontuiApp(App):
 
         self.push_screen(ConfirmModal(f"Delete job?\n\n[bold]{preview}[/]"), on_confirm)
 
-    @staticmethod
-    def _ensure_log_redirect(command: str) -> str:
-        if re.search(r">>?\s*\S+", command):
-            return command
-        log_file = CRONTUI_LOGS / f"{_slug(command)}.log"
-        return f"{command} >> {log_file} 2>&1"
-
     def action_add(self) -> None:
         def on_result(result: dict | None) -> None:
             if result:
-                cmd = self._ensure_log_redirect(result["command"])
+                cmd = _ensure_log_redirect(result["command"])
                 self.jobs.append(CronJob(result["schedule"], cmd, True, result["description"]))
                 self.manager.save(self.jobs)
                 self.notify("Added", timeout=2)
@@ -598,8 +591,116 @@ class CrontuiApp(App):
         self.push_screen(LogViewerModal(self.jobs[idx]))
 
 
+def _ensure_log_redirect(command: str) -> str:
+    if re.search(r">>?\s*\S+", command):
+        return command
+    log_file = CRONTUI_LOGS / f"{_slug(command)}.log"
+    return f"{command} >> {log_file} 2>&1"
+
+
+def _cli_list(args: object) -> None:
+    manager = CrontabManager()
+    jobs = manager.load()
+    if not jobs:
+        print("No cron jobs found.")
+        return
+    for i, job in enumerate(jobs):
+        status = "ON " if job.enabled else "OFF"
+        desc = f"  # {job.description}" if job.description else ""
+        print(f"{i}  {status}  {job.schedule}  {job.command}{desc}")
+
+
+def _cli_add(args: object) -> None:
+    CRONTUI_LOGS.mkdir(parents=True, exist_ok=True)
+    manager = CrontabManager()
+    jobs = manager.load()
+    schedule = args.schedule  # type: ignore[attr-defined]
+    command = args.command  # type: ignore[attr-defined]
+    description = args.description or ""  # type: ignore[attr-defined]
+    try:
+        croniter(schedule)
+    except (ValueError, KeyError):
+        print(f"Invalid cron expression: {schedule}")
+        raise SystemExit(1) from None
+    cmd = _ensure_log_redirect(command)
+    jobs.append(CronJob(schedule, cmd, True, description))
+    manager.save(jobs)
+    print(f"Added job {len(jobs) - 1}: {schedule} {cmd}")
+
+
+def _cli_remove(args: object) -> None:
+    manager = CrontabManager()
+    jobs = manager.load()
+    idx = args.index  # type: ignore[attr-defined]
+    if idx < 0 or idx >= len(jobs):
+        print(f"Invalid index {idx}. Use 'crontui list' to see jobs.")
+        raise SystemExit(1)
+    removed = jobs.pop(idx)
+    manager.save(jobs)
+    print(f"Removed job {idx}: {removed.schedule} {removed.command}")
+
+
+def _cli_enable(args: object) -> None:
+    manager = CrontabManager()
+    jobs = manager.load()
+    idx = args.index  # type: ignore[attr-defined]
+    if idx < 0 or idx >= len(jobs):
+        print(f"Invalid index {idx}. Use 'crontui list' to see jobs.")
+        raise SystemExit(1)
+    jobs[idx].enabled = True
+    manager.save(jobs)
+    print(f"Enabled job {idx}: {jobs[idx].schedule} {jobs[idx].command}")
+
+
+def _cli_disable(args: object) -> None:
+    manager = CrontabManager()
+    jobs = manager.load()
+    idx = args.index  # type: ignore[attr-defined]
+    if idx < 0 or idx >= len(jobs):
+        print(f"Invalid index {idx}. Use 'crontui list' to see jobs.")
+        raise SystemExit(1)
+    jobs[idx].enabled = False
+    manager.save(jobs)
+    print(f"Disabled job {idx}: {jobs[idx].schedule} {jobs[idx].command}")
+
+
 def main() -> None:
-    CrontuiApp().run()
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="crontui", description="TUI and CLI for managing cron jobs")
+    sub = parser.add_subparsers(dest="subcmd")
+
+    sub.add_parser("list", help="List all cron jobs")
+
+    p_add = sub.add_parser("add", help="Add a new cron job")
+    p_add.add_argument("schedule", help="Cron expression (e.g. '*/5 * * * *')")
+    p_add.add_argument("command", help="Command to run")
+    p_add.add_argument("-d", "--description", default="", help="Job description")
+
+    p_rm = sub.add_parser("remove", help="Remove a cron job by index")
+    p_rm.add_argument("index", type=int, help="Job index (from 'crontui list')")
+
+    p_en = sub.add_parser("enable", help="Enable a cron job by index")
+    p_en.add_argument("index", type=int, help="Job index")
+
+    p_dis = sub.add_parser("disable", help="Disable a cron job by index")
+    p_dis.add_argument("index", type=int, help="Job index")
+
+    args = parser.parse_args()
+
+    match args.subcmd:
+        case None:
+            CrontuiApp().run()
+        case "list":
+            _cli_list(args)
+        case "add":
+            _cli_add(args)
+        case "remove":
+            _cli_remove(args)
+        case "enable":
+            _cli_enable(args)
+        case "disable":
+            _cli_disable(args)
 
 
 if __name__ == "__main__":
