@@ -1,7 +1,7 @@
 [project]
 name = "crontui"
-version = "0.2.0"
-description = "TUI and CLI for managing cron jobs"
+version = "0.3.0"
+description = "TUI and CLI for managing cron jobs and periodic Claude tasks"
 requires-python = ">=3.13"
 
 dependencies = [
